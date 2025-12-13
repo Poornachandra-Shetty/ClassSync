@@ -1,6 +1,9 @@
 ﻿SubjectID,SubjectName,FacultyID,HoursPerWeek,Sections
-201,Data Structures,101,4,A;B;C;D
-202,Algorithms,102,3,A;B
-203,DBMS,103,4,C;D
-204,Operating Systems,104,3,A;B;C
-205,Computer Networks,105,3,B;D
+201,Data Structures and Algorithms,101,5,A;B;C;D
+202,Mathematics for CSE stream,102,4,A;B;C;D
+203,Digital Principles and Design,103,3,A;B;C;D
+204,Computer Organization and Architecture,104,2,A;B;C;D
+205,Unix Shell Programming,105,4,A;B;C;D
+206,OOPS,106,4,A;B;C;D
+207,Business Etiquettes,107,2,A;B;C;D
+208,Industry Oriented Programming,108,2,A;B;C;D
