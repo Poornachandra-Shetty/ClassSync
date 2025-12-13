@@ -1,0 +1,6 @@
+﻿SubjectID,SubjectName,FacultyID,HoursPerWeek,Sections
+201,Data Structures,101,4,A;B;C;D
+202,Algorithms,102,3,A;B
+203,DBMS,103,4,C;D
+204,Operating Systems,104,3,A;B;C
+205,Computer Networks,105,3,B;D
