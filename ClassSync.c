@@ -11,7 +11,7 @@
 #define MAX_FACULTY 50
 #define MAX_SUBJECTS 100
 
-// Structure Definitions
+// Structures
 typedef struct {
     int id;
     char name[MAX_NAME];
@@ -19,12 +19,15 @@ typedef struct {
     int assignedHours;
 } Faculty;
 
+// CHANGED: Added sectionFacultyMap to support different faculty per section
 typedef struct {
     int id;
     char name[MAX_NAME];
-    int facultyId;
     int hoursPerWeek;
-    char sections[MAX_SECTIONS][10];
+    int isLab;
+    int labHours;
+    char sections[MAX_SECTIONS][10];        // Section names (A, B, C, etc.)
+    int facultyIds[MAX_SECTIONS];           // CHANGED: Faculty ID per section
     int sectionCount;
 } Subject;
 
@@ -45,7 +48,7 @@ typedef struct {
     char section[10];
 } TimeSlot;
 
-// Global Data
+// Global Variables
 Faculty faculties[MAX_FACULTY];
 Subject subjects[MAX_SUBJECTS];
 Branch branch;
@@ -56,28 +59,12 @@ int facultyCount = 0, subjectCount = 0, dayCount = 0;
 // Utility Functions
 void trim(char* str) {
     char* start = str;
-    char* end;
-    
-    // Trim leading space
     while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') start++;
-    
-    // All spaces?
-    if (*start == 0) {
-        *str = 0;
-        return;
-    }
-    
-    // Trim trailing space
-    end = start + strlen(start) - 1;
+    if (*start == 0) { *str = 0; return; }
+    char* end = start + strlen(start) - 1;
     while (end > start && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) end--;
-    
-    // Write new null terminator
     *(end + 1) = 0;
-    
-    // Move trimmed string to beginning
-    if (start != str) {
-        memmove(str, start, strlen(start) + 1);
-    }
+    if (start != str) memmove(str, start, strlen(start) + 1);
 }
 
 int getSectionIndex(char* section) {
@@ -87,98 +74,143 @@ int getSectionIndex(char* section) {
     return -1;
 }
 
+// CHANGED: New function to get faculty ID for a specific subject and section
+int getFacultyForSection(int subjectId, char* section) {
+    for (int i = 0; i < subjectCount; i++) {
+        if (subjects[i].id == subjectId) {
+            // Find the section index in this subject
+            for (int j = 0; j < subjects[i].sectionCount; j++) {
+                if (strcmp(subjects[i].sections[j], section) == 0) {
+                    return subjects[i].facultyIds[j];
+                }
+            }
+        }
+    }
+    return -1; // Not found
+}
+
 // CSV Reading Functions
 void readFacultyCSV(const char* filename) {
     FILE* fp = fopen(filename, "r");
-    if (!fp) {
-        printf("Error: Cannot open %s\n", filename);
-        return;
-    }
+    if (!fp) { printf("Error: Cannot open %s\n", filename); return; }
     
     char line[MAX_LINE];
-    fgets(line, MAX_LINE, fp); // Skip header
+    fgets(line, MAX_LINE, fp);
     
     while (fgets(line, MAX_LINE, fp)) {
         char* token = strtok(line, ",");
         faculties[facultyCount].id = atoi(token);
-        
         token = strtok(NULL, ",");
         strcpy(faculties[facultyCount].name, token);
         trim(faculties[facultyCount].name);
-        
         token = strtok(NULL, ",");
         faculties[facultyCount].maxHours = atoi(token);
         faculties[facultyCount].assignedHours = 0;
-        
         facultyCount++;
     }
     fclose(fp);
     printf("Loaded %d faculties\n", facultyCount);
 }
 
+// CHANGED: Updated to parse section-faculty mapping
 void readSubjectsCSV(const char* filename) {
     FILE* fp = fopen(filename, "r");
-    if (!fp) {
-        printf("Error: Cannot open %s\n", filename);
-        return;
-    }
+    if (!fp) { printf("Error: Cannot open %s\n", filename); return; }
     
     char line[MAX_LINE];
     fgets(line, MAX_LINE, fp); // Skip header
     
     while (fgets(line, MAX_LINE, fp)) {
-        // Remove newline
         line[strcspn(line, "\r\n")] = 0;
         
+        if (strlen(line) == 0) continue;
+        
         char* token = strtok(line, ",");
+        if (!token) continue;
         subjects[subjectCount].id = atoi(token);
         
         token = strtok(NULL, ",");
+        if (!token) continue;
         strcpy(subjects[subjectCount].name, token);
         trim(subjects[subjectCount].name);
         
         token = strtok(NULL, ",");
-        subjects[subjectCount].facultyId = atoi(token);
-        
-        token = strtok(NULL, ",");
+        if (!token) continue;
         subjects[subjectCount].hoursPerWeek = atoi(token);
         
         token = strtok(NULL, ",");
+        if (!token) continue;
+        subjects[subjectCount].isLab = atoi(token);
+        
+        if (subjects[subjectCount].isLab) {
+            subjects[subjectCount].labHours = 1;
+        } else {
+            subjects[subjectCount].labHours = 0;
+        }
+        
+        // CHANGED: Parse sectionFacultyMap (format: A:101;B:102;C:103)
+        token = strtok(NULL, ",");
         if (token != NULL) {
             trim(token);
-            char sectionsBuffer[MAX_LINE];
-            strcpy(sectionsBuffer, token);
+            char mapBuffer[MAX_LINE];
+            strcpy(mapBuffer, token);
             
-            char* secToken = strtok(sectionsBuffer, ";");
+            // Parse each section:faculty pair
+            char* pairToken = strtok(mapBuffer, ";");
             subjects[subjectCount].sectionCount = 0;
-            while (secToken != NULL && subjects[subjectCount].sectionCount < MAX_SECTIONS) {
-                trim(secToken);
-                strcpy(subjects[subjectCount].sections[subjects[subjectCount].sectionCount], secToken);
-                subjects[subjectCount].sectionCount++;
-                secToken = strtok(NULL, ";");
+            
+            while (pairToken != NULL && subjects[subjectCount].sectionCount < MAX_SECTIONS) {
+                trim(pairToken);
+                
+                // Split by colon to get section and faculty
+                char* colonPos = strchr(pairToken, ':');
+                if (colonPos != NULL) {
+                    *colonPos = '\0'; // Split the string
+                    char* sectionName = pairToken;
+                    char* facultyIdStr = colonPos + 1;
+                    
+                    trim(sectionName);
+                    trim(facultyIdStr);
+                    
+                    // Store section name and faculty ID
+                    strcpy(subjects[subjectCount].sections[subjects[subjectCount].sectionCount], sectionName);
+                    subjects[subjectCount].facultyIds[subjects[subjectCount].sectionCount] = atoi(facultyIdStr);
+                    subjects[subjectCount].sectionCount++;
+                }
+                
+                pairToken = strtok(NULL, ";");
             }
         }
+        
+        // Debug output
+        printf("Loaded: %s | Theory=%d hrs | Lab=%s | Section-Faculty Map: ",
+               subjects[subjectCount].name, 
+               subjects[subjectCount].hoursPerWeek,
+               subjects[subjectCount].isLab ? "Yes" : "No");
+        
+        for (int i = 0; i < subjects[subjectCount].sectionCount; i++) {
+            printf("%s:F%d%s", 
+                   subjects[subjectCount].sections[i],
+                   subjects[subjectCount].facultyIds[i],
+                   i < subjects[subjectCount].sectionCount-1 ? ", " : "");
+        }
+        printf("\n");
         
         subjectCount++;
     }
     fclose(fp);
-    printf("Loaded %d subjects\n", subjectCount);
+    printf("\nLoaded %d subjects total\n", subjectCount);
 }
 
 void readSectionsCSV(const char* filename) {
     FILE* fp = fopen(filename, "r");
-    if (!fp) {
-        printf("Error: Cannot open %s\n", filename);
-        return;
-    }
+    if (!fp) { printf("Error: Cannot open %s\n", filename); return; }
     
     char line[MAX_LINE];
-    fgets(line, MAX_LINE, fp); // Skip header
+    fgets(line, MAX_LINE, fp);
     
     if (fgets(line, MAX_LINE, fp)) {
-        // Remove newline
         line[strcspn(line, "\r\n")] = 0;
-        
         char* token = strtok(line, ",");
         strcpy(branch.branch, token);
         trim(branch.branch);
@@ -191,7 +223,6 @@ void readSectionsCSV(const char* filename) {
             while (secToken != NULL && branch.sectionCount < MAX_SECTIONS) {
                 trim(secToken);
                 strcpy(branch.sections[branch.sectionCount], secToken);
-                printf("  Section loaded: '%s'\n", branch.sections[branch.sectionCount]);
                 branch.sectionCount++;
                 secToken = strtok(NULL, ";");
             }
@@ -203,188 +234,208 @@ void readSectionsCSV(const char* filename) {
 
 void readSlotsCSV(const char* filename) {
     FILE* fp = fopen(filename, "r");
-    if (!fp) {
-        printf("Error: Cannot open %s\n", filename);
-        return;
-    }
+    if (!fp) { printf("Error: Cannot open %s\n", filename); return; }
     
     char line[MAX_LINE];
-    fgets(line, MAX_LINE, fp); // Skip header
+    fgets(line, MAX_LINE, fp);
     
     while (fgets(line, MAX_LINE, fp)) {
         char* token = strtok(line, ",");
         days[dayCount].day = atoi(token);
-        
         token = strtok(NULL, ",");
         days[dayCount].periods = atoi(token);
-        
         dayCount++;
     }
     fclose(fp);
     printf("Loaded %d days\n", dayCount);
 }
 
-// Forward declarations for constraint checking functions
-bool isFacultyFree(int facultyId, int day, int period);
-bool hasConsecutiveClass(int subjectId, int sectionIdx, int day, int period);
-int countSubjectInDay(int subjectId, int sectionIdx, int day);
-bool canAssign(int facultyId, int day, int period, int sectionIdx);
-bool canAssignWithConstraints(int subjectId, int facultyId, int day, int period, int sectionIdx);
-
-// Conflict Detection Implementation
+// Constraint Checking Functions
 bool isFacultyFree(int facultyId, int day, int period) {
     for (int s = 0; s < branch.sectionCount; s++) {
-        if (timetable[day][period][s].facultyId == facultyId) {
-            return false;
-        }
+        if (timetable[day][period][s].facultyId == facultyId) return false;
     }
     return true;
 }
 
-bool hasConsecutiveClass(int subjectId, int sectionIdx, int day, int period) {
-    // Check previous period
-    if (period > 0) {
-        if (timetable[day][period-1][sectionIdx].subjectId == subjectId) {
-            return true;
+bool isFacultyFreeForLab(int facultyId, int day, int period) {
+    if (!isFacultyFree(facultyId, day, period)) return false;
+    if (period + 1 >= days[day].periods) return false;
+    if (!isFacultyFree(facultyId, day, period + 1)) return false;
+    return true;
+}
+
+bool hasLabOnDay(int day, int sectionIdx) {
+    for (int p = 0; p < days[day].periods; p++) {
+        if (timetable[day][p][sectionIdx].subjectId != -1) {
+            for (int i = 0; i < subjectCount; i++) {
+                if (subjects[i].id == timetable[day][p][sectionIdx].subjectId && subjects[i].isLab) {
+                    return true;
+                }
+            }
         }
     }
-    
-    // Check next period
-    if (period < days[day].periods - 1) {
-        if (timetable[day][period+1][sectionIdx].subjectId == subjectId) {
-            return true;
-        }
-    }
-    
     return false;
 }
 
-int countSubjectInDay(int subjectId, int sectionIdx, int day) {
-    int count = 0;
-    for (int p = 0; p < days[day].periods; p++) {
-        if (timetable[day][p][sectionIdx].subjectId == subjectId) {
-            count++;
-        }
+bool hasSameSubjectConsecutive(int subjectId, int day, int period, int sectionIdx) {
+    if (period > 0 && timetable[day][period-1][sectionIdx].subjectId == subjectId) {
+        return true;
     }
-    return count;
+    if (period < days[day].periods - 1 && timetable[day][period+1][sectionIdx].subjectId == subjectId) {
+        return true;
+    }
+    return false;
 }
 
-bool canAssign(int facultyId, int day, int period, int sectionIdx) {
-    // Check if slot is empty
+bool canAssign(int facultyId, int subjectId, int day, int period, int sectionIdx) {
     if (timetable[day][period][sectionIdx].facultyId != -1) return false;
-    
-    // Check if faculty is free at this time
     if (!isFacultyFree(facultyId, day, period)) return false;
     
-    // Check faculty workload
+    if (hasSameSubjectConsecutive(subjectId, day, period, sectionIdx)) return false;
+    
     for (int f = 0; f < facultyCount; f++) {
         if (faculties[f].id == facultyId) {
             if (faculties[f].assignedHours >= faculties[f].maxHours) return false;
             break;
         }
     }
-    
     return true;
 }
 
-bool canAssignWithConstraints(int subjectId, int facultyId, int day, int period, int sectionIdx) {
-    // Basic checks
-    if (!canAssign(facultyId, day, period, sectionIdx)) return false;
+bool canAssignLab(int facultyId, int day, int period, int sectionIdx) {
+    if (timetable[day][period][sectionIdx].facultyId != -1) return false;
+    if (period + 1 >= days[day].periods) return false;
+    if (timetable[day][period + 1][sectionIdx].facultyId != -1) return false;
+    if (!isFacultyFreeForLab(facultyId, day, period)) return false;
     
-    // Constraint 1: No consecutive classes of same subject
-    if (hasConsecutiveClass(subjectId, sectionIdx, day, period)) return false;
+    if (hasLabOnDay(day, sectionIdx)) return false;
     
-    // Constraint 2: Maximum 2 classes of same subject per day
-    if (countSubjectInDay(subjectId, sectionIdx, day) >= 2) return false;
-    
+    for (int f = 0; f < facultyCount; f++) {
+        if (faculties[f].id == facultyId) {
+            if (faculties[f].assignedHours + 2 > faculties[f].maxHours) return false;
+            break;
+        }
+    }
     return true;
 }
 
 int countClassesInDay(int day, int sectionIdx) {
     int count = 0;
     for (int p = 0; p < days[day].periods; p++) {
-        if (timetable[day][p][sectionIdx].facultyId != -1) {
-            count++;
-        }
+        if (timetable[day][p][sectionIdx].facultyId != -1) count++;
     }
     return count;
 }
 
-bool findAndAssignSlot(int subjectId, char* section, int* assignedDay, int* assignedPeriod) {
+// CHANGED: Updated to use section-specific faculty
+bool findAndAssignLabSlot(int subjectId, char* section, int* assignedDay, int* assignedPeriod) {
     int sectionIdx = getSectionIndex(section);
     if (sectionIdx == -1) return false;
     
-    int subIdx = -1, facIdx = -1;
+    int subIdx = -1;
     for (int i = 0; i < subjectCount; i++) {
-        if (subjects[i].id == subjectId) {
-            subIdx = i;
-            break;
-        }
+        if (subjects[i].id == subjectId) { subIdx = i; break; }
     }
     if (subIdx == -1) return false;
     
+    // CHANGED: Get faculty ID for this specific section
+    int facultyId = getFacultyForSection(subjectId, section);
+    if (facultyId == -1) {
+        printf("Error: No faculty assigned for subject %d, section %s\n", subjectId, section);
+        return false;
+    }
+    
+    int facIdx = -1;
     for (int i = 0; i < facultyCount; i++) {
-        if (faculties[i].id == subjects[subIdx].facultyId) {
-            facIdx = i;
-            break;
-        }
+        if (faculties[i].id == facultyId) { facIdx = i; break; }
     }
     if (facIdx == -1) return false;
     
-    // Strategy: Prefer days with fewer classes to distribute evenly
-    typedef struct {
-        int day;
-        int period;
-        int dayLoad;
-    } SlotOption;
-    
-    SlotOption options[MAX_DAYS * MAX_PERIODS];
-    int optionCount = 0;
-    
-    // Collect all valid slot options with their day loads
+    int bestDay = -1, bestPeriod = -1, minLoad = 9999;
     for (int d = 0; d < dayCount; d++) {
         int dayLoad = countClassesInDay(d, sectionIdx);
-        for (int p = 0; p < days[d].periods; p++) {
-            if (canAssignWithConstraints(subjects[subIdx].id, subjects[subIdx].facultyId, d, p, sectionIdx)) {
-                options[optionCount].day = d;
-                options[optionCount].period = p;
-                options[optionCount].dayLoad = dayLoad;
-                optionCount++;
+        for (int p = 0; p < days[d].periods - 1; p++) {
+            if (canAssignLab(facultyId, d, p, sectionIdx)) {
+                if (dayLoad < minLoad) {
+                    minLoad = dayLoad;
+                    bestDay = d;
+                    bestPeriod = p;
+                }
             }
         }
     }
     
-    if (optionCount == 0) return false;
+    if (bestDay == -1) return false;
     
-    // Sort options by day load (prefer days with fewer classes)
-    for (int i = 0; i < optionCount - 1; i++) {
-        for (int j = 0; j < optionCount - i - 1; j++) {
-            if (options[j].dayLoad > options[j+1].dayLoad) {
-                SlotOption temp = options[j];
-                options[j] = options[j+1];
-                options[j+1] = temp;
-            }
-        }
-    }
-    
-    // Choose the first option (day with least load)
-    int bestDay = options[0].day;
-    int bestPeriod = options[0].period;
-    
-    // Assign to this slot
-    timetable[bestDay][bestPeriod][sectionIdx].facultyId = subjects[subIdx].facultyId;
+    timetable[bestDay][bestPeriod][sectionIdx].facultyId = facultyId;
     timetable[bestDay][bestPeriod][sectionIdx].subjectId = subjects[subIdx].id;
     strcpy(timetable[bestDay][bestPeriod][sectionIdx].section, section);
     
-    faculties[facIdx].assignedHours++;
+    timetable[bestDay][bestPeriod + 1][sectionIdx].facultyId = facultyId;
+    timetable[bestDay][bestPeriod + 1][sectionIdx].subjectId = subjects[subIdx].id;
+    strcpy(timetable[bestDay][bestPeriod + 1][sectionIdx].section, section);
+    
+    faculties[facIdx].assignedHours += 2;
+    
     *assignedDay = bestDay;
     *assignedPeriod = bestPeriod;
     return true;
 }
 
-// Timetable Generation
+// CHANGED: Updated to use section-specific faculty
+bool findAndAssignSlot(int subjectId, char* section, int* assignedDay, int* assignedPeriod) {
+    int sectionIdx = getSectionIndex(section);
+    if (sectionIdx == -1) return false;
+    
+    int subIdx = -1;
+    for (int i = 0; i < subjectCount; i++) {
+        if (subjects[i].id == subjectId) { subIdx = i; break; }
+    }
+    if (subIdx == -1) return false;
+    
+    // CHANGED: Get faculty ID for this specific section
+    int facultyId = getFacultyForSection(subjectId, section);
+    if (facultyId == -1) {
+        printf("Error: No faculty assigned for subject %d, section %s\n", subjectId, section);
+        return false;
+    }
+    
+    int facIdx = -1;
+    for (int i = 0; i < facultyCount; i++) {
+        if (faculties[i].id == facultyId) { facIdx = i; break; }
+    }
+    if (facIdx == -1) return false;
+    
+    int bestDay = -1, bestPeriod = -1, minLoad = 9999;
+    for (int d = 0; d < dayCount; d++) {
+        int dayLoad = countClassesInDay(d, sectionIdx);
+        
+        for (int p = 0; p < days[d].periods; p++) {
+            if (canAssign(facultyId, subjects[subIdx].id, d, p, sectionIdx)) {
+                if (dayLoad < minLoad) {
+                    minLoad = dayLoad;
+                    bestDay = d;
+                    bestPeriod = p;
+                }
+            }
+        }
+    }
+    
+    if (bestDay == -1) return false;
+    
+    timetable[bestDay][bestPeriod][sectionIdx].facultyId = facultyId;
+    timetable[bestDay][bestPeriod][sectionIdx].subjectId = subjects[subIdx].id;
+    strcpy(timetable[bestDay][bestPeriod][sectionIdx].section, section);
+    
+    faculties[facIdx].assignedHours++;
+    
+    *assignedDay = bestDay;
+    *assignedPeriod = bestPeriod;
+    return true;
+}
+
 void generateTimetable() {
-    // Initialize timetable with -1 (empty slots)
     for (int d = 0; d < dayCount; d++) {
         for (int p = 0; p < days[d].periods; p++) {
             for (int s = 0; s < branch.sectionCount; s++) {
@@ -395,166 +446,173 @@ void generateTimetable() {
         }
     }
     
-    // Build a list of all assignments needed
-    typedef struct {
-        int subjectId;
-        char section[10];
-        char subjectName[MAX_NAME];
-        int facultyId;
-    } Assignment;
+    // UPDATED: Track remaining hours for each subject per section
+    // Format: remainingHours[subjectIndex][sectionIndex]
+    int remainingHours[MAX_SUBJECTS][MAX_SECTIONS];
+    for (int i = 0; i < subjectCount; i++) {
+        for (int j = 0; j < subjects[i].sectionCount; j++) {
+            remainingHours[i][j] = subjects[i].hoursPerWeek;
+        }
+    }
     
-    Assignment assignments[500];
-    int assignmentCount = 0;
-    int totalToAssign = 0;
+    printf("\n=== PHASE 1: Assigning Labs (Deducted from total hours) ===\n");
+    int labsAssigned = 0;
+    
+    for (int i = 0; i < subjectCount; i++) {
+        if (subjects[i].isLab) {
+            for (int j = 0; j < subjects[i].sectionCount; j++) {
+                int assignedDay = -1, assignedPeriod = -1;
+                if (findAndAssignLabSlot(subjects[i].id, subjects[i].sections[j], &assignedDay, &assignedPeriod)) {
+                    labsAssigned++;
+                    
+                    // UPDATED: Deduct 2 hours (lab) from total hoursPerWeek
+                    remainingHours[i][j] -= 2;
+                    
+                    int facultyId = getFacultyForSection(subjects[i].id, subjects[i].sections[j]);
+                    char* facultyName = "Unknown";
+                    for (int f = 0; f < facultyCount; f++) {
+                        if (faculties[f].id == facultyId) {
+                            facultyName = faculties[f].name;
+                            break;
+                        }
+                    }
+                    printf("✓ LAB %d: %s - Section %s (Faculty: %s): Day %d, Periods %d-%d | Remaining theory hours: %d\n",
+                           labsAssigned, subjects[i].name, subjects[i].sections[j], 
+                           facultyName, assignedDay+1, assignedPeriod+1, assignedPeriod+2, remainingHours[i][j]);
+                } else {
+                    printf("✗ Failed LAB: %s - Section %s (no slot available)\n", subjects[i].name, subjects[i].sections[j]);
+                }
+            }
+        }
+    }
+    
+    printf("\n=== PHASE 2: Assigning Theory Classes (Remaining hours after lab deduction) ===\n");
+    int theoryAssigned = 0;
     
     for (int i = 0; i < subjectCount; i++) {
         for (int j = 0; j < subjects[i].sectionCount; j++) {
-            for (int h = 0; h < subjects[i].hoursPerWeek; h++) {
-                assignments[assignmentCount].subjectId = subjects[i].id;
-                strcpy(assignments[assignmentCount].section, subjects[i].sections[j]);
-                strcpy(assignments[assignmentCount].subjectName, subjects[i].name);
-                assignments[assignmentCount].facultyId = subjects[i].facultyId;
-                assignmentCount++;
-                totalToAssign++;
-            }
-        }
-    }
-    
-    printf("\nTotal classes to assign: %d\n", totalToAssign);
-    printf("Starting assignment process...\n\n");
-    
-    int totalAssigned = 0;
-    
-    // Try to assign each class
-    for (int i = 0; i < assignmentCount; i++) {
-        int assignedDay = -1, assignedPeriod = -1;
-        
-        if (findAndAssignSlot(assignments[i].subjectId, assignments[i].section, 
-                              &assignedDay, &assignedPeriod)) {
-            totalAssigned++;
+            // UPDATED: Use remainingHours instead of hoursPerWeek
+            int theoryHoursToAssign = remainingHours[i][j];
             
-            // Find faculty name for display
-            char facName[MAX_NAME] = "Unknown";
-            for (int f = 0; f < facultyCount; f++) {
-                if (faculties[f].id == assignments[i].facultyId) {
-                    strcpy(facName, faculties[f].name);
-                    break;
-                }
-            }
-            
-            if (totalAssigned <= 20 || totalAssigned % 10 == 0) {
-                printf("✓ [%d/%d] Assigned: %s to Section %s, Day %d, Period %d (Faculty: %s)\n",
-                       totalAssigned, totalToAssign, assignments[i].subjectName, 
-                       assignments[i].section, assignedDay+1, assignedPeriod+1, facName);
-            }
-        } else {
-            printf("✗ Failed to assign: %s to Section %s (Faculty ID: %d)\n",
-                   assignments[i].subjectName, assignments[i].section, assignments[i].facultyId);
-        }
-    }
-    
-    printf("\n=== Timetable Generation Summary ===\n");
-    printf("Total classes assigned: %d out of %d required (%.1f%%)\n", 
-           totalAssigned, totalToAssign, (totalAssigned * 100.0 / totalToAssign));
-    
-    // Print day-wise distribution
-    printf("\n=== Day-wise Class Distribution ===\n");
-    for (int d = 0; d < dayCount; d++) {
-        int dayTotal = 0;
-        printf("Day %d: ", d+1);
-        for (int s = 0; s < branch.sectionCount; s++) {
-            int sectionClasses = 0;
-            for (int p = 0; p < days[d].periods; p++) {
-                if (timetable[d][p][s].facultyId != -1) {
-                    sectionClasses++;
-                    dayTotal++;
-                }
-            }
-            printf("Sec-%s:%d  ", branch.sections[s], sectionClasses);
-        }
-        printf(" | Total: %d classes\n", dayTotal);
-    }
-    
-    // Verify constraints
-    printf("\n=== Constraint Verification ===\n");
-    int consecutiveViolations = 0;
-    int maxPerDayViolations = 0;
-    
-    for (int s = 0; s < branch.sectionCount; s++) {
-        for (int d = 0; d < dayCount; d++) {
-            // Check for consecutive classes
-            for (int p = 0; p < days[d].periods - 1; p++) {
-                if (timetable[d][p][s].subjectId != -1 && 
-                    timetable[d][p][s].subjectId == timetable[d][p+1][s].subjectId) {
-                    consecutiveViolations++;
-                    printf("⚠️  Consecutive: Section %s, Day %d, Periods %d-%d\n", 
-                           branch.sections[s], d+1, p+1, p+2);
-                }
-            }
-            
-            // Check max 2 per day constraint
-            int subjectCounts[MAX_SUBJECTS] = {0};
-            for (int p = 0; p < days[d].periods; p++) {
-                if (timetable[d][p][s].subjectId != -1) {
-                    for (int i = 0; i < subjectCount; i++) {
-                        if (subjects[i].id == timetable[d][p][s].subjectId) {
-                            subjectCounts[i]++;
-                            if (subjectCounts[i] > 2) {
-                                maxPerDayViolations++;
-                                printf("⚠️  >2 classes/day: Section %s, Day %d, Subject %s (%d classes)\n", 
-                                       branch.sections[s], d+1, subjects[i].name, subjectCounts[i]);
+            if (theoryHoursToAssign > 0) {
+                for (int h = 0; h < theoryHoursToAssign; h++) {
+                    int assignedDay = -1, assignedPeriod = -1;
+                    if (findAndAssignSlot(subjects[i].id, subjects[i].sections[j], &assignedDay, &assignedPeriod)) {
+                        theoryAssigned++;
+                        if (theoryAssigned <= 20 || theoryAssigned % 10 == 0) {
+                            int facultyId = getFacultyForSection(subjects[i].id, subjects[i].sections[j]);
+                            char* facultyName = "Unknown";
+                            for (int f = 0; f < facultyCount; f++) {
+                                if (faculties[f].id == facultyId) {
+                                    facultyName = faculties[f].name;
+                                    break;
+                                }
                             }
-                            break;
+                            printf("✓ Theory %d: %s - Section %s (Faculty: %s): Day %d, Period %d (hour %d/%d)\n",
+                                   theoryAssigned, subjects[i].name, subjects[i].sections[j], 
+                                   facultyName, assignedDay+1, assignedPeriod+1, h+1, theoryHoursToAssign);
                         }
+                    } else {
+                        printf("✗ Failed: %s - Section %s (hour %d/%d) - no valid slot\n", 
+                               subjects[i].name, subjects[i].sections[j], h+1, theoryHoursToAssign);
                     }
                 }
             }
         }
     }
     
-    if (consecutiveViolations == 0 && maxPerDayViolations == 0) {
-        printf("✓ All constraints satisfied!\n");
-        printf("  - No consecutive classes of same subject\n");
-        printf("  - Maximum 2 classes per subject per day\n");
-        printf("  - Classes distributed across all %d days\n", dayCount);
-    }
+    printf("\n=== Summary ===\n");
+    printf("Labs assigned: %d (each lab = 2 periods)\n", labsAssigned);
+    printf("Theory assigned: %d\n", theoryAssigned);
+    printf("Total periods used: %d\n", (labsAssigned * 2) + theoryAssigned);
     
-    // Print faculty workload
-    printf("\n=== Faculty Workload ===\n");
-    for (int i = 0; i < facultyCount; i++) {
-        float util = (faculties[i].maxHours > 0) ? 
-                     (faculties[i].assignedHours * 100.0 / faculties[i].maxHours) : 0;
-        printf("%s: %d/%d hours (%.1f%% utilized)", 
-               faculties[i].name, faculties[i].assignedHours, faculties[i].maxHours, util);
-        
-        if (util < 50.0 && faculties[i].maxHours > 0) {
-            printf(" ⚠️  UNDERUTILIZED");
-        } else if (util >= 100.0) {
-            printf(" ✓ FULL");
+    printf("\n=== Constraint Validation ===\n");
+    for (int s = 0; s < branch.sectionCount; s++) {
+        printf("\nSection %s:\n", branch.sections[s]);
+        for (int d = 0; d < dayCount; d++) {
+            int dayClasses = countClassesInDay(d, s);
+            int labCount = 0;
+            
+            for (int p = 0; p < days[d].periods; p++) {
+                if (timetable[d][p][s].subjectId != -1) {
+                    for (int i = 0; i < subjectCount; i++) {
+                        if (subjects[i].id == timetable[d][p][s].subjectId && subjects[i].isLab) {
+                            labCount++;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            printf("  Day %d: %d classes, %d labs", d+1, dayClasses, labCount);
+            if (labCount > 1) printf(" ⚠️ VIOLATION: Multiple labs!");
+            if (dayClasses < 5) printf(" ⚠️ Less than 5 classes");
+            printf("\n");
         }
-        printf("\n");
     }
 }
 
-// Output Generation
+// ============================================================================
+// UPDATED: Generate horizontal grid-style timetable (one per section)
+// Format: Rows = Days, Columns = Periods
+// ============================================================================
 void generateSectionTimetable() {
     FILE* fp = fopen("section_timetable.csv", "w");
+    if (!fp) {
+        printf("Error: Cannot create section_timetable.csv\n");
+        return;
+    }
     
-    // Write header
-    fprintf(fp, "Section,Day,Period,Subject,Faculty\n");
+    // Find maximum number of periods across all days
+    int maxPeriods = 0;
+    for (int d = 0; d < dayCount; d++) {
+        if (days[d].periods > maxPeriods) {
+            maxPeriods = days[d].periods;
+        }
+    }
     
-    // Sort by section, then day, then period for organized output
+    // Generate timetable for each section
     for (int s = 0; s < branch.sectionCount; s++) {
+        // Section header
+        fprintf(fp, "Section %s\n", branch.sections[s]);
+        
+        // Header row: Day/Period, P1, P2, P3, ...
+        fprintf(fp, "Day/Period");
+        for (int p = 0; p < maxPeriods; p++) {
+            fprintf(fp, ",P%d", p + 1);
+        }
+        fprintf(fp, "\n");
+        
+        // Generate rows for each day
         for (int d = 0; d < dayCount; d++) {
-            for (int p = 0; p < days[d].periods; p++) {
-                if (timetable[d][p][s].facultyId != -1) {
+            // Day label in first column
+            fprintf(fp, "Day %d", d + 1);
+            
+            // Generate cells for each period
+            for (int p = 0; p < maxPeriods; p++) {
+                fprintf(fp, ",");
+                
+                // Check if this period exists for this day
+                if (p >= days[d].periods) {
+                    fprintf(fp, "--");
+                    continue;
+                }
+                
+                // Check if slot is assigned
+                if (timetable[d][p][s].facultyId == -1) {
+                    fprintf(fp, "--");
+                } else {
+                    // Get subject name
                     char subName[MAX_NAME] = "Unknown";
                     char facName[MAX_NAME] = "Unknown";
+                    int subjectId = timetable[d][p][s].subjectId;
+                    bool isLabSubject = false;
                     
                     // Find subject name
                     for (int i = 0; i < subjectCount; i++) {
-                        if (subjects[i].id == timetable[d][p][s].subjectId) {
+                        if (subjects[i].id == subjectId) {
                             strcpy(subName, subjects[i].name);
+                            isLabSubject = subjects[i].isLab;
                             break;
                         }
                     }
@@ -567,56 +625,97 @@ void generateSectionTimetable() {
                         }
                     }
                     
-                    // Write CSV line with proper formatting
-                    fprintf(fp, "\"%s\",%d,%d,\"%s\",\"%s\"\n", 
-                            branch.sections[s], d+1, p+1, subName, facName);
+                    // Check if this is a LAB slot
+                    bool isLabSlot = false;
+                    if (isLabSubject) {
+                        // Check if next period has same subject (start of lab)
+                        if (p + 1 < days[d].periods && 
+                            timetable[d][p+1][s].subjectId == subjectId && 
+                            timetable[d][p+1][s].facultyId == timetable[d][p][s].facultyId) {
+                            isLabSlot = true;
+                        }
+                        // Check if previous period has same subject (continuation of lab)
+                        else if (p > 0 && 
+                                 timetable[d][p-1][s].subjectId == subjectId && 
+                                 timetable[d][p-1][s].facultyId == timetable[d][p][s].facultyId) {
+                            isLabSlot = true;
+                        }
+                    }
+                    
+                    // Format the cell content: "Subject (Faculty)" or "Subject LAB (Faculty)"
+                    if (isLabSlot) {
+                        fprintf(fp, "\"%s LAB (%s)\"", subName, facName);
+                    } else {
+                        fprintf(fp, "\"%s (%s)\"", subName, facName);
+                    }
                 }
             }
+            fprintf(fp, "\n");
+        }
+        
+        // Add blank line between sections (except after last section)
+        if (s < branch.sectionCount - 1) {
+            fprintf(fp, "\n");
         }
     }
     
     fclose(fp);
-    printf("Generated section_timetable.csv\n");
+    printf("Generated section_timetable.csv (horizontal grid format)\n");
 }
 
 void generateFacultyTimetable() {
     FILE* fp = fopen("faculty_timetable.csv", "w");
+    fprintf(fp, "Faculty,Day,Period,Subject,Section,Type\n");
     
-    // Write header
-    fprintf(fp, "Faculty,Day,Period,Subject,Section\n");
-    
-    // Sort by faculty, then day, then period
     for (int f = 0; f < facultyCount; f++) {
         for (int d = 0; d < dayCount; d++) {
             for (int p = 0; p < days[d].periods; p++) {
                 for (int s = 0; s < branch.sectionCount; s++) {
                     if (timetable[d][p][s].facultyId == faculties[f].id) {
                         char subName[MAX_NAME] = "Unknown";
+                        char type[10] = "Theory";
                         
-                        // Find subject name
+                        int subjectId = timetable[d][p][s].subjectId;
+                        bool isLabSubject = false;
+                        
                         for (int i = 0; i < subjectCount; i++) {
-                            if (subjects[i].id == timetable[d][p][s].subjectId) {
+                            if (subjects[i].id == subjectId) {
                                 strcpy(subName, subjects[i].name);
+                                isLabSubject = subjects[i].isLab;
                                 break;
                             }
                         }
                         
-                        // Write CSV line with proper formatting
-                        fprintf(fp, "\"%s\",%d,%d,\"%s\",\"%s\"\n", 
-                                faculties[f].name, d+1, p+1, subName, branch.sections[s]);
+                        // FIXED: Check if this is a LAB slot by checking BOTH directions
+                        if (isLabSubject) {
+                            // Check if next period has same subject (start of lab)
+                            if (p + 1 < days[d].periods && 
+                                timetable[d][p+1][s].subjectId == subjectId && 
+                                timetable[d][p+1][s].facultyId == faculties[f].id) {
+                                strcpy(type, "Lab");
+                            }
+                            // Check if previous period has same subject (continuation of lab)
+                            else if (p > 0 && 
+                                     timetable[d][p-1][s].subjectId == subjectId && 
+                                     timetable[d][p-1][s].facultyId == faculties[f].id) {
+                                strcpy(type, "Lab");
+                            }
+                        }
+                        
+                        fprintf(fp, "\"%s\",%d,%d,\"%s\",\"%s\",\"%s\"\n", 
+                                faculties[f].name, d+1, p+1, subName, branch.sections[s], type);
                     }
                 }
             }
         }
     }
-    
     fclose(fp);
     printf("Generated faculty_timetable.csv\n");
 }
 
 void generateSummary() {
     FILE* fp = fopen("summary.csv", "w");
-    fprintf(fp, "FacultyID,FacultyName,MaxHours,AssignedHours,Utilization%%\n");
+    fprintf(fp, "FacultyID,FacultyName,MaxHours,AssignedHours,Utilization\n");
     
     for (int i = 0; i < facultyCount; i++) {
         float util = (faculties[i].maxHours > 0) ? 
@@ -629,53 +728,13 @@ void generateSummary() {
     printf("Generated summary.csv\n");
 }
 
-// Main Function
 int main() {
-    printf("=== ClassSync: Faculty Timetable Generator ===\n\n");
+    printf("=== Timetable Generator with Section-Specific Faculty Assignment ===\n\n");
     
-    // Read input CSV files
     readFacultyCSV("faculty.csv");
     readSubjectsCSV("subjects.csv");
     readSectionsCSV("sections.csv");
     readSlotsCSV("slots.csv");
-    
-    // Calculate and display workload statistics
-    printf("\n=== Workload Analysis ===\n");
-    int totalRequired = 0;
-    for (int i = 0; i < subjectCount; i++) {
-        int subjectTotal = subjects[i].hoursPerWeek * subjects[i].sectionCount;
-        totalRequired += subjectTotal;
-        printf("Subject %d: %d hours/week × %d sections = %d total hours\n",
-               subjects[i].id, subjects[i].hoursPerWeek, 
-               subjects[i].sectionCount, subjectTotal);
-    }
-    
-    int totalCapacity = 0;
-    for (int i = 0; i < facultyCount; i++) {
-        totalCapacity += faculties[i].maxHours;
-    }
-    
-    int totalSlots = 0;
-    for (int i = 0; i < dayCount; i++) {
-        totalSlots += days[i].periods;
-    }
-    totalSlots *= branch.sectionCount;
-    
-    printf("\nTotal classes required: %d\n", totalRequired);
-    printf("Total faculty capacity: %d hours\n", totalCapacity);
-    printf("Total available slots: %d (Days × Periods × Sections)\n", totalSlots);
-    
-    if (totalRequired > totalCapacity) {
-        printf("\n⚠️  WARNING: Required classes (%d) exceed faculty capacity (%d)!\n", 
-               totalRequired, totalCapacity);
-        printf("   Recommendation: Increase MaxHoursPerWeek for faculties or add more faculty.\n");
-    }
-    
-    if (totalRequired > totalSlots) {
-        printf("\n⚠️  WARNING: Required classes (%d) exceed available slots (%d)!\n", 
-               totalRequired, totalSlots);
-        printf("   Recommendation: Add more days or increase periods per day.\n");
-    }
     
     printf("\n=== Generating Timetable ===\n");
     generateTimetable();
@@ -685,11 +744,6 @@ int main() {
     generateFacultyTimetable();
     generateSummary();
     
-    printf("\n=== Timetable Generation Complete! ===\n");
-    printf("Output files created:\n");
-    printf("  - section_timetable.csv\n");
-    printf("  - faculty_timetable.csv\n");
-    printf("  - summary.csv\n");
-    
+    printf("\n=== Complete! ===\n");
     return 0;
 }

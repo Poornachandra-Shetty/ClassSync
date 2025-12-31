@@ -1,9 +1,10 @@
-﻿SubjectID,SubjectName,FacultyID,HoursPerWeek,Sections
-201,Data Structures and Algorithms,101,5,A;B;C;D
-202,Mathematics for CSE stream,102,4,A;B;C;D
-203,Digital Principles and Design,103,3,A;B;C;D
-204,Computer Organization and Architecture,104,2,A;B;C;D
-205,Unix Shell Programming,105,4,A;B;C;D
-206,OOPS,106,4,A;B;C;D
-207,Business Etiquettes,107,2,A;B;C;D
-208,Industry Oriented Programming,108,2,A;B;C;D
+﻿SubjectID,SubjectName,HoursPerWeek,isLab,SectionFacultyMap
+201,Data Structures and Algorithms,6,1,A:101;B:201;C:301;D:401
+202,Mathematics for CSE stream,4,0,A:102;B:202;C:302;D:402
+203,Digital Principles and Design,4,1,A:103;B:203;C:104;D:403
+204,Computer Organization and Architecture,3,0,A:104;B:204;C:203;D:404
+205,Unix Shell Programming,4,0,A:105;B:205;C:305;D:405
+206,OOPS,3,1,A:106;B:106;C:306;D:406
+207,Business Etiquettes,2,1,A:107;B:207;C:307;D:407
+208,Internet Enabled Prototyping,2,1,A:108;B:208;C:308;D:308
+209,Biology For Engineers,2,0,A:109;B:109;C:209;D:309
